@@ -192,6 +192,26 @@ type RegisterInput struct {
 // (same canonical sha for this skill) is a no-op that returns the existing
 // version with created=false.
 func (s *Store) RegisterVersion(ctx context.Context, in RegisterInput) (*SkillVersion, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("pgstore: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	ver, created, err := registerVersionTx(ctx, tx, in)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("pgstore: commit: %w", err)
+	}
+	return ver, created, nil
+}
+
+// registerVersionTx performs the upsert-skill + append-version work within an
+// existing transaction, so proposal approval can apply a create in the same tx
+// that marks the proposal approved. Does NOT commit.
+func registerVersionTx(ctx context.Context, tx pgx.Tx, in RegisterInput) (*SkillVersion, bool, error) {
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Profile) == "" {
 		return nil, false, fmt.Errorf("pgstore: profile and name are required")
 	}
@@ -208,12 +228,6 @@ func (s *Store) RegisterVersion(ctx context.Context, in RegisterInput) (*SkillVe
 	if origin == "" {
 		origin = "authored"
 	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, false, fmt.Errorf("pgstore: begin: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	var skillID int64
 	err = tx.QueryRow(ctx, `
@@ -234,9 +248,6 @@ RETURNING id`,
 		Scan(&existing.Version, &existing.SHA, &existing.Body, &existing.Author, &existing.Source, &existing.CreatedAt)
 	if err == nil {
 		existing.Frontmatter = orEmptyMap(in.Frontmatter)
-		if cErr := tx.Commit(ctx); cErr != nil {
-			return nil, false, fmt.Errorf("pgstore: commit: %w", cErr)
-		}
 		return &existing, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -263,9 +274,6 @@ RETURNING id, created_at`,
 	if _, err := tx.Exec(ctx,
 		`UPDATE skills SET current_version_id = $1 WHERE id = $2`, newVersionID, skillID); err != nil {
 		return nil, false, fmt.Errorf("pgstore: set current version: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, false, fmt.Errorf("pgstore: commit: %w", err)
 	}
 	return &SkillVersion{
 		Version:     nextVer,

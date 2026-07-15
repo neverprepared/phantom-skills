@@ -24,7 +24,7 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(st.Close)
 	if _, err := st.pool.Exec(context.Background(),
-		`TRUNCATE skill_versions, skills RESTART IDENTITY CASCADE`); err != nil {
+		`TRUNCATE skill_versions, skills, proposals, usage_events, promotion_state RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return st

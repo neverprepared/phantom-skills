@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gofrs/flock"
 
+	"github.com/neverprepared/phantom-skills/internal/brainlink"
 	"github.com/neverprepared/phantom-skills/internal/pgstore"
 	"github.com/neverprepared/phantom-skills/internal/version"
 )
@@ -38,17 +39,24 @@ type Daemon struct {
 
 	cfg      *ServerConfig
 	registry *Registry
-	store    *pgstore.Store // nil when no [postgres] dsn configured
+	store    *pgstore.Store    // nil when no [postgres] dsn configured
+	brain    *brainlink.Client // nil when no [brain] api configured
+	pipeline Pipeline          // zero-value = all no-op stages
 	router   chi.Router
 	srv      *http.Server
 	flock    *flock.Flock
 }
 
-// StartOpts groups inputs to Start. All fields required.
+// StartOpts groups inputs to Start.
 type StartOpts struct {
 	ConfigDir string
 	DataDir   string
 	Logger    *slog.Logger
+
+	// Pipeline supplies the intelligence stages. The zero value (all nil
+	// members) runs the daemon with no-op pipeline behavior — the default
+	// until internal/pipeline lands (M6+).
+	Pipeline Pipeline
 }
 
 // Start loads config, acquires the global flock (fail-fast if another daemon
@@ -109,6 +117,15 @@ func Start(opts StartOpts) (*Daemon, error) {
 		d.Logger.Info("phantom-skills: postgres store opened")
 	}
 
+	d.pipeline = opts.Pipeline
+	if bc := cfg.Brain; bc.Enabled() {
+		d.brain = brainlink.New(brainlink.Config{
+			API: bc.API, Token: bc.Token, Profile: bc.Profile, Vault: bc.Vault,
+			RecordLearnings: bc.RecordLearnings, RecordTelemetry: bc.RecordTelemetry,
+		}, d.Logger)
+		d.Logger.Info("phantom-skills: brainlink enabled")
+	}
+
 	d.router = d.buildRouter()
 	d.srv = &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
@@ -141,6 +158,14 @@ func (d *Daemon) buildRouter() chi.Router {
 			r.Delete("/skills/{name}", d.handleRetireSkill)
 			r.Get("/skills/{name}/versions", d.handleListVersions)
 			r.Get("/sync", d.handleSync)
+
+			r.Post("/usage", d.handleUsage)
+
+			r.Get("/proposals", d.handleListProposals)
+			r.Post("/proposals", d.handleCreateProposal)
+			r.Get("/proposals/{id}", d.handleGetProposal)
+			r.Post("/proposals/{id}/approve", d.handleApproveProposal)
+			r.Post("/proposals/{id}/reject", d.handleRejectProposal)
 		})
 	})
 	return r
@@ -151,6 +176,9 @@ func (d *Daemon) buildRouter() chi.Router {
 func (d *Daemon) Run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Background pipeline loop (no-op until a Pipeline is wired).
+	d.startWorkers(ctx)
 
 	hupCh := make(chan os.Signal, 1)
 	signal.Notify(hupCh, syscall.SIGHUP)
