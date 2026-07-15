@@ -1,0 +1,10 @@
+*.log
+.env
+
+# Go build artifacts
+/pskillctl
+
+# Docker compose runtime state — operator-local, never in git
+docker/.env
+docker/config/
+docker/data/

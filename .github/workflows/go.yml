@@ -1,0 +1,40 @@
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't cancel the macOS run when Linux fails (or vice versa) —
+      # we want full signal on platform-specific regressions.
+      fail-fast: false
+      matrix:
+        os:
+          - macos-14       # Apple Silicon (arm64)
+          - ubuntu-latest  # x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: make vet
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Race test
+        run: make test-race
