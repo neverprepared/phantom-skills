@@ -65,24 +65,20 @@ func (c *Client) key(ctx context.Context) (string, error) {
 	return c.apiKey, nil
 }
 
-// RepoSpec configures repo access for a session.
-type RepoSpec struct {
-	URL             string `json:"url"`
-	Mode            string `json:"mode"` // worktree-mount | clone | clone-worktree | ci-ratchet
-	Branch          string `json:"branch,omitempty"`
-	ContainerPath   string `json:"container_path,omitempty"`
-	Task            string `json:"task,omitempty"`              // ci-ratchet
-	StartMergeQueue bool   `json:"start_merge_queue,omitempty"` // ci-ratchet
-}
-
 // CreateRequest is the POST /api/create payload.
+//
+// NOTE: the live brainbox API (CreateSessionRequest) takes the task as a
+// TOP-LEVEL `task` field and has NO `repo`/ci-ratchet object — that was
+// refactored out of the model even though the API docstring and the reflex
+// skill still reference it. A worker therefore receives its task via `Task`
+// and must clone/PR itself (the container mounts ~/.ssh and ~/.gitconfig).
 type CreateRequest struct {
-	Name             string    `json:"name"`
-	Role             string    `json:"role"`    // developer|supervisor|worker|reviewer|merge-queue|pr-shepherd
-	Backend          string    `json:"backend"` // docker (default) | utm
-	WorkspaceProfile string    `json:"workspace_profile,omitempty"`
-	WorkspaceHome    string    `json:"workspace_home,omitempty"`
-	Repo             *RepoSpec `json:"repo,omitempty"`
+	Name             string `json:"name"`
+	Role             string `json:"role"`    // developer|supervisor|worker|reviewer|merge-queue|pr-shepherd
+	Backend          string `json:"backend"` // docker (default) | utm
+	Task             string `json:"task,omitempty"`
+	WorkspaceProfile string `json:"workspace_profile,omitempty"`
+	WorkspaceHome    string `json:"workspace_home,omitempty"`
 }
 
 // Create spins up a sandboxed session and returns the raw response (fields vary
@@ -125,37 +121,29 @@ func (c *Client) Delete(ctx context.Context, session string) error {
 	return c.do(ctx, http.MethodPost, "/api/delete", map[string]any{"name": session}, nil)
 }
 
-// RatchetSpec fires an autonomous ci-ratchet worker: clone repo → do task →
-// open PR → (CI/merge-queue gates) → auto-delete.
-type RatchetSpec struct {
-	Name            string
-	RepoURL         string
-	Branch          string // default work/<name> server-side
-	Task            string
-	Backend         string // default docker
-	StartMergeQueue bool
-	Profile         string
+// WorkerSpec launches a transient `worker` agent with a self-contained task.
+// The task text must tell the agent everything — which repo to clone, what to
+// change, and to open a PR — because the API carries no repo object.
+type WorkerSpec struct {
+	Name    string
+	Task    string
+	Backend string // default docker
+	Profile string
 }
 
-// FireRatchet launches a ci-ratchet worker for RatchetSpec and returns the raw
-// create response.
-func (c *Client) FireRatchet(ctx context.Context, s RatchetSpec) (map[string]any, error) {
-	if strings.TrimSpace(s.RepoURL) == "" || strings.TrimSpace(s.Task) == "" {
-		return nil, fmt.Errorf("brainbox: ratchet requires RepoURL and Task")
+// RunWorker creates a role=worker session with a top-level task and returns the
+// raw create response. The worker role's prompt already drives "complete the
+// task and open a PR"; the task supplies the specifics.
+func (c *Client) RunWorker(ctx context.Context, s WorkerSpec) (map[string]any, error) {
+	if strings.TrimSpace(s.Task) == "" {
+		return nil, fmt.Errorf("brainbox: RunWorker requires a Task")
 	}
 	return c.Create(ctx, CreateRequest{
 		Name:             s.Name,
 		Role:             "worker",
 		Backend:          s.Backend,
+		Task:             s.Task,
 		WorkspaceProfile: s.Profile,
-		Repo: &RepoSpec{
-			URL:             s.RepoURL,
-			Mode:            "ci-ratchet",
-			Branch:          s.Branch,
-			ContainerPath:   "/home/developer/workspace/repo",
-			Task:            s.Task,
-			StartMergeQueue: s.StartMergeQueue,
-		},
 	})
 }
 

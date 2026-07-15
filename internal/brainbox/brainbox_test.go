@@ -52,15 +52,13 @@ func TestAuthKeyFetchedLazily(t *testing.T) {
 	}
 }
 
-func TestFireRatchetSendsCiRatchetWorker(t *testing.T) {
+func TestRunWorkerSendsTopLevelTask(t *testing.T) {
 	srv, creates := mockBrainbox(t)
 	c := New(srv.URL, "")
-	resp, err := c.FireRatchet(context.Background(), RatchetSpec{
-		Name:            "improve-git-worktree-flow",
-		RepoURL:         "git@github.com:neverprepared/phantom-skills-registry",
-		Task:            "tighten git-worktree-flow description",
-		StartMergeQueue: true,
-		Profile:         "personal",
+	resp, err := c.RunWorker(context.Background(), WorkerSpec{
+		Name:    "improve-git-worktree-flow",
+		Task:    "clone the registry, tighten git-worktree-flow's description, open a PR",
+		Profile: "personal",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,12 +73,21 @@ func TestFireRatchetSendsCiRatchetWorker(t *testing.T) {
 	if got["role"] != "worker" {
 		t.Fatalf("role = %v, want worker", got["role"])
 	}
-	repo, ok := got["repo"].(map[string]any)
-	if !ok || repo["mode"] != "ci-ratchet" {
-		t.Fatalf("repo not ci-ratchet: %v", got["repo"])
+	// The task MUST be top-level (body.task), not nested in a repo object — the
+	// live API drops unknown `repo` fields and reads body.task.
+	if task, _ := got["task"].(string); task == "" {
+		t.Fatalf("top-level task not sent: %v", got)
 	}
-	if repo["task"] == "" || repo["start_merge_queue"] != true {
-		t.Fatalf("repo task/merge-queue wrong: %v", repo)
+	if _, hasRepo := got["repo"]; hasRepo {
+		t.Fatalf("client must not send a repo object (unsupported): %v", got)
+	}
+}
+
+func TestRunWorkerRequiresTask(t *testing.T) {
+	srv, _ := mockBrainbox(t)
+	c := New(srv.URL, "")
+	if _, err := c.RunWorker(context.Background(), WorkerSpec{Name: "x"}); err == nil {
+		t.Fatal("expected error for empty task")
 	}
 }
 
