@@ -1,0 +1,32 @@
+# phantom-skills daemon config. Copy this dir to docker/config/ and adjust.
+# Per-scope auth lives in profiles/<scope>/auth.toml — create one with:
+#   pskillctl server registry add personal --description "laptop fleet"
+
+[server]
+port = 9997
+host = "0.0.0.0"
+log_level = "info"
+
+[postgres]
+# Overridden by PSKILLS_POSTGRES_DSN in docker-compose. Set here for a
+# non-compose deployment.
+dsn = "postgres://pskills:pskills@postgres:5432/phantom_skills?sslmode=disable"
+
+# phantom-brain integration (optional). When set, the daemon records applied
+# create/prune/promote decisions into long-term memory.
+# [brain]
+# api = "http://pbrain-daemon:9998"
+# token = "sk-..."            # or set PSKILLS_BRAIN_TOKEN
+# profile = "personal"
+# vault = "memory"
+# record_learnings = true
+# record_telemetry = true
+
+[pipeline]
+detector_poll_interval_secs = 60
+min_usage_for_promote = 5
+# 0 keeps every create/prune/promote human-gated (the default).
+auto_approve_below_risk = 0
+
+[defaults]
+sync_change_feed_page = 100

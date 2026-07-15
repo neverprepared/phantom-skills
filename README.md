@@ -49,14 +49,49 @@ One Go binary, two roles (mirrors `pbrainctl`):
                                                 └─ brainlink → phantom-brain
 ```
 
-## Status
+## Setup
 
-Early build. See the milestone plan for what's landed vs pending. `M0`
-(skeleton) is the compiling cobra tree; the daemon, sync, and pipeline arrive in
-later milestones.
+**Daemon (control server):**
+
+```
+# config dir defaults to ~/.config/phantom-skills-server
+pskillctl server registry add personal --description "laptop fleet"   # scaffolds auth.toml
+pskillctl server db migrate                                           # apply schema
+pskillctl server serve                                                # PSKILLS_CONFIG_DIR / PSKILLS_DATA_DIR
+```
+
+`server.toml` needs at least a `[postgres]` DSN (see `docker/config-example/`).
+Docker:
+
+```
+docker compose -f docker/docker-compose.yml up -d postgres
+docker compose -f docker/docker-compose.yml run --rm pskillctl server db migrate
+docker compose -f docker/docker-compose.yml up -d pskillctl
+```
+
+**Agent (each workstation):** install `pskillctl` (`brew install
+neverprepared/tap/pskillctl`) and point Claude Code's MCP config at
+`pskillctl client mcp` with the env contract:
+
+```
+CL_SKILLS_API=https://pskills.example.com   CL_SKILLS_API_TOKEN=sk-...
+CL_WORKSPACE_PROFILE=personal               CL_SKILLS_SET=default
+```
+
+Then `pskillctl client sync` (or the `skill_sync` tool) materializes promoted
+skills into `~/.claude/skills/`.
+
+## Build / test
 
 ```
 make build      # -> ./pskillctl
-./pskillctl client version
-./pskillctl --help
+make test       # go test ./...
+make test-race
 ```
+
+## Status
+
+The plumbing layer is complete and tested (daemon, agent MCP, offline queue,
+sync, telemetry, the human-gated proposal loop, and the pipeline seam). The
+LLM-driven intelligence pipeline (watch → detect → author → verify → prune)
+plugs into the seam in a later release.

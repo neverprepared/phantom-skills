@@ -1,0 +1,32 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # dispatch release.yaml when a release is created
+
+# Language-agnostic release-type "simple" (no package.json). On a merged
+# release PR, dispatch the binary + Homebrew tap build.
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # release-please pushes the tag with GITHUB_TOKEN, which never triggers
+      # another workflow (recursion guard). A workflow_dispatch via the API IS
+      # honored, so releases publish binaries + the formula with no manual step.
+      - name: Dispatch the binary + tap release build
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yaml -f tag="${{ steps.release.outputs.tag_name }}"

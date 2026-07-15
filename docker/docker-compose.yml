@@ -1,0 +1,57 @@
+# phantom-skills control-server stack: Postgres (System of Record) + the
+# pskillctl daemon. Self-contained by default; to join the wider phantom
+# control-server stack (so the daemon can reach phantom-brain), attach the
+# `phantom` external network and point [brain].api in server.toml at the brain
+# daemon's service name.
+#
+# First run:
+#   docker compose -f docker/docker-compose.yml up -d postgres
+#   docker compose -f docker/docker-compose.yml run --rm pskillctl server db migrate
+#   docker compose -f docker/docker-compose.yml up -d pskillctl
+#
+# Config lives in ./config (bind-mounted read-only). Copy config-example/ and
+# fill in a bearer token (pskillctl server registry add <scope>).
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pskills
+      POSTGRES_PASSWORD: ${PSKILLS_PG_PASSWORD:-pskills}
+      POSTGRES_DB: phantom_skills
+    ports:
+      - "${PSKILLS_PG_PORT:-5433}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pskills -d phantom_skills"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pskillctl:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: pskillctl:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${PSKILLS_PORT:-9997}:9997"
+    environment:
+      PSKILLS_CONFIG_DIR: /config
+      PSKILLS_DATA_DIR: /data
+      # DSN override so the daemon reaches the compose Postgres by service name.
+      PSKILLS_POSTGRES_DSN: "postgres://pskills:${PSKILLS_PG_PASSWORD:-pskills}@postgres:5432/phantom_skills?sslmode=disable"
+    volumes:
+      - ./config:/config:ro
+      - ./data/pskillctl:/data
+
+# To join the phantom control-server network, uncomment:
+# networks:
+#   default:
+#     name: phantom
+#     external: true
