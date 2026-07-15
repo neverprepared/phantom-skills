@@ -57,6 +57,14 @@ type ServerConfig struct {
 	// live in internal/pipeline; only the values live here.
 	Pipeline PipelineConfig `toml:"pipeline"`
 
+	// Brainbox wires the agent-execution plane where authoring/verification
+	// runs (as ratchet workers). Optional — absent block ⇒ auto-fire disabled.
+	Brainbox BrainboxConfig `toml:"brainbox"`
+
+	// Registry is the git System of Record for skill content; ratchets clone it
+	// and open PRs against it. Required for the Option B improvement loop.
+	Registry RegistryConfig `toml:"registry"`
+
 	Defaults ScopeDefaults `toml:"defaults"`
 }
 
@@ -84,6 +92,25 @@ type PipelineConfig struct {
 	DetectorPollIntervalSecs int `toml:"detector_poll_interval_secs"`
 	MinUsageForPromote       int `toml:"min_usage_for_promote"`
 	AutoApproveBelowRisk     int `toml:"auto_approve_below_risk"`
+}
+
+// BrainboxConfig mirrors [brainbox]: the agent-execution plane the daemon fires
+// ratchet workers into. APIKey is optional (fetched from /api/auth/key).
+type BrainboxConfig struct {
+	API    string `toml:"api"`     // e.g. https://brainbox-api.neverprepared.com
+	APIKey string `toml:"api_key"` // optional; env PSKILLS_BRAINBOX_KEY overrides
+}
+
+// Enabled reports whether the operator wired a brainbox endpoint.
+func (c BrainboxConfig) Enabled() bool { return strings.TrimSpace(c.API) != "" }
+
+// RegistryConfig mirrors [registry]: the git repo holding skill content.
+// MaxConcurrentRatchets caps in-flight auto-fired ratchets (0 ⇒ default);
+// RatchetCooldownHours is the anti-nag window after a ratchet for a skill.
+type RegistryConfig struct {
+	RepoURL               string `toml:"repo_url"` // git@github.com:neverprepared/phantom-skills-registry
+	MaxConcurrentRatchets int    `toml:"max_concurrent_ratchets"`
+	RatchetCooldownHours  int    `toml:"ratchet_cooldown_hours"`
 }
 
 // ScopeDefaults are the per-scope knobs. The same shape lives in
@@ -127,6 +154,17 @@ func applyServerDefaults(cfg *ServerConfig) {
 	}
 	if v := strings.TrimSpace(os.Getenv("PSKILLS_BRAIN_TOKEN")); v != "" {
 		cfg.Brain.Token = v
+	}
+	if v := strings.TrimSpace(os.Getenv("PSKILLS_BRAINBOX_KEY")); v != "" {
+		cfg.Brainbox.APIKey = v
+	}
+
+	r := &cfg.Registry
+	if r.MaxConcurrentRatchets == 0 {
+		r.MaxConcurrentRatchets = 2
+	}
+	if r.RatchetCooldownHours == 0 {
+		r.RatchetCooldownHours = 24
 	}
 
 	p := &cfg.Pipeline
