@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gofrs/flock"
 
+	"github.com/neverprepared/phantom-skills/internal/brainbox"
 	"github.com/neverprepared/phantom-skills/internal/brainlink"
 	"github.com/neverprepared/phantom-skills/internal/pgstore"
 	"github.com/neverprepared/phantom-skills/internal/version"
@@ -41,6 +42,7 @@ type Daemon struct {
 	registry *Registry
 	store    *pgstore.Store    // nil when no [postgres] dsn configured
 	brain    *brainlink.Client // nil when no [brain] api configured
+	bbox     *brainbox.Client  // nil when no [brainbox] api configured
 	pipeline Pipeline          // zero-value = all no-op stages
 	router   chi.Router
 	srv      *http.Server
@@ -124,6 +126,11 @@ func Start(opts StartOpts) (*Daemon, error) {
 			RecordLearnings: bc.RecordLearnings, RecordTelemetry: bc.RecordTelemetry,
 		}, d.Logger)
 		d.Logger.Info("phantom-skills: brainlink enabled")
+	}
+	if cfg.Brainbox.Enabled() {
+		d.bbox = brainbox.New(cfg.Brainbox.API, cfg.Brainbox.APIKey)
+		d.Logger.Info("phantom-skills: brainbox auto-fire enabled",
+			slog.String("registry", cfg.Registry.RepoURL))
 	}
 
 	d.router = d.buildRouter()
