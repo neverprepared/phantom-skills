@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -106,6 +107,24 @@ type GetSkillResponse struct {
 	Version *SkillVersion `json:"version"`
 }
 
+// SyncSkill is one promoted skill in the change-feed.
+type SyncSkill struct {
+	Name        string         `json:"name"`
+	Slug        string         `json:"slug"`
+	Status      string         `json:"status"`
+	Origin      string         `json:"origin"`
+	SHA         string         `json:"sha"`
+	Frontmatter map[string]any `json:"frontmatter"`
+	Body        string         `json:"body"`
+}
+
+// SyncResponse is the change-feed payload.
+type SyncResponse struct {
+	Skills  []SyncSkill `json:"skills"`
+	Deletes []string    `json:"deletes"`
+	Cursor  string      `json:"cursor"`
+}
+
 // --- reads (online-only) ---
 
 // Health pings the daemon's unauthenticated health endpoint.
@@ -143,6 +162,20 @@ func (c *Client) ListSkills(ctx context.Context, opts ListOpts) (*ListSkillsResp
 func (c *Client) GetSkill(ctx context.Context, name string) (*GetSkillResponse, error) {
 	var out GetSkillResponse
 	if err := c.do(ctx, http.MethodGet, apiPrefix+"/skills/"+name, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Sync pulls the change-feed of promoted skills since the given cursor. An
+// empty cursor bootstraps a full pull.
+func (c *Client) Sync(ctx context.Context, since string) (*SyncResponse, error) {
+	path := apiPrefix + "/sync"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	var out SyncResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

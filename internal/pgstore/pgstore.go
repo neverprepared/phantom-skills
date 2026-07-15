@@ -7,8 +7,6 @@ package pgstore
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/neverprepared/phantom-skills/internal/skillfile"
 	"github.com/neverprepared/phantom-skills/migrations"
 )
 
@@ -196,7 +195,7 @@ func (s *Store) RegisterVersion(ctx context.Context, in RegisterInput) (*SkillVe
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Profile) == "" {
 		return nil, false, fmt.Errorf("pgstore: profile and name are required")
 	}
-	sha := CanonicalSHA(in.Frontmatter, in.Body)
+	sha := skillfile.CanonicalSHA(in.Frontmatter, in.Body)
 	fmJSON, err := json.Marshal(orEmptyMap(in.Frontmatter))
 	if err != nil {
 		return nil, false, fmt.Errorf("pgstore: marshal frontmatter: %w", err)
@@ -222,7 +221,7 @@ INSERT INTO skills (profile, name, slug, status, origin, tags)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (profile, name) DO UPDATE SET updated_at = now()
 RETURNING id`,
-		in.Profile, in.Name, Slugify(in.Name), status, origin, orEmptySlice(in.Tags)).Scan(&skillID)
+		in.Profile, in.Name, skillfile.Slugify(in.Name), status, origin, orEmptySlice(in.Tags)).Scan(&skillID)
 	if err != nil {
 		return nil, false, fmt.Errorf("pgstore: upsert skill: %w", err)
 	}
@@ -313,6 +312,60 @@ ORDER BY v.version DESC`
 	return out, nil
 }
 
+// SyncRow is one entry in the sync change-feed.
+type SyncRow struct {
+	ID          int64
+	Name        string
+	Slug        string
+	Status      string
+	Origin      string
+	SHA         string
+	Frontmatter map[string]any
+	Body        string
+	UpdatedAt   time.Time
+}
+
+// SyncFeed returns skills whose (updated_at, id) sorts after the given cursor,
+// ascending, for the agent change-feed. A composite keyset on (updated_at, id)
+// is used rather than id alone so that a NEW VERSION of an existing skill (which
+// bumps updated_at via the trigger but keeps the same id) reappears in the feed.
+// Promoted rows carry their current version's content; the handler partitions
+// promoted→materialize, retired→delete, and skips other statuses (they still
+// advance the cursor).
+func (s *Store) SyncFeed(ctx context.Context, profile string, sinceTS time.Time, sinceID int64, limit int) ([]SyncRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	const q = `
+SELECT s.id, s.name, s.slug, s.status, s.origin, s.updated_at,
+       COALESCE(v.sha, ''), v.frontmatter, COALESCE(v.body, '')
+FROM skills s
+LEFT JOIN skill_versions v ON v.id = s.current_version_id
+WHERE s.profile = $1
+  AND (s.updated_at, s.id) > ($2, $3)
+ORDER BY s.updated_at ASC, s.id ASC
+LIMIT $4`
+	rows, err := s.pool.Query(ctx, q, profile, sinceTS, sinceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: sync feed: %w", err)
+	}
+	defer rows.Close()
+	var out []SyncRow
+	for rows.Next() {
+		var r SyncRow
+		var fmRaw []byte
+		if err := rows.Scan(&r.ID, &r.Name, &r.Slug, &r.Status, &r.Origin, &r.UpdatedAt,
+			&r.SHA, &fmRaw, &r.Body); err != nil {
+			return nil, fmt.Errorf("pgstore: scan sync row: %w", err)
+		}
+		if len(fmRaw) > 0 {
+			_ = json.Unmarshal(fmRaw, &r.Frontmatter)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // RetireSkill soft-deletes a skill (status=retired). Returns ErrNotFound if the
 // skill doesn't exist.
 func (s *Store) RetireSkill(ctx context.Context, profile, name string) error {
@@ -325,39 +378,6 @@ func (s *Store) RetireSkill(ctx context.Context, profile, name string) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-// CanonicalSHA computes the content-addressed identity of a skill version:
-// sha256 over the canonical JSON of the frontmatter (encoding/json sorts map
-// keys) joined with the body. internal/skillfile will formalize this in M3;
-// the shape is stable enough for the registry to dedup on now.
-func CanonicalSHA(frontmatter map[string]any, body string) string {
-	fmJSON, _ := json.Marshal(orEmptyMap(frontmatter))
-	h := sha256.New()
-	h.Write(fmJSON)
-	h.Write([]byte{0})
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// Slugify reduces a skill name to a filesystem-safe slug. Names are expected to
-// already be lowercase-hyphen; this is defensive normalization.
-func Slugify(name string) string {
-	var b strings.Builder
-	prevHyphen := false
-	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevHyphen = false
-		default:
-			if !prevHyphen && b.Len() > 0 {
-				b.WriteByte('-')
-				prevHyphen = true
-			}
-		}
-	}
-	return strings.Trim(b.String(), "-")
 }
 
 func deref(p *string) string {

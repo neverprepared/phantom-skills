@@ -140,6 +140,7 @@ func (d *Daemon) buildRouter() chi.Router {
 			r.Put("/skills/{name}", d.handleUpdateSkill)
 			r.Delete("/skills/{name}", d.handleRetireSkill)
 			r.Get("/skills/{name}/versions", d.handleListVersions)
+			r.Get("/sync", d.handleSync)
 		})
 	})
 	return r

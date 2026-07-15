@@ -15,6 +15,7 @@ import (
 	"github.com/neverprepared/phantom-skills/internal/client"
 	"github.com/neverprepared/phantom-skills/internal/client/wqueue"
 	"github.com/neverprepared/phantom-skills/internal/config"
+	"github.com/neverprepared/phantom-skills/internal/syncer"
 )
 
 // ServerDeps is the dependency container the tool handlers close over.
@@ -29,6 +30,10 @@ type ServerDeps struct {
 
 	// Conn tracks daemon reachability so write tools can render a queued-notice.
 	Conn *client.Connectivity
+
+	// Syncer materializes the shared registry into the local skills dir. Nil
+	// disables skill_sync.
+	Syncer *syncer.Syncer
 
 	// Agent is this session's resolved contract (profile, skillset, skills dir).
 	Agent config.Agent
@@ -47,6 +52,7 @@ func NewServer(deps ServerDeps) *Server { return &Server{deps: deps} }
 func (s *Server) Register(srv *server.MCPServer) {
 	srv.AddTool(skillListTool(), s.handleSkillList)
 	srv.AddTool(skillGetTool(), s.handleSkillGet)
+	srv.AddTool(skillSyncTool(), s.handleSkillSync)
 	srv.AddTool(skillUsageReportTool(), s.handleSkillUsageReport)
 	srv.AddTool(skillProposeTool(), s.handleSkillPropose)
 }

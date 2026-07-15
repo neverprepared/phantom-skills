@@ -16,6 +16,7 @@ import (
 	"github.com/neverprepared/phantom-skills/internal/client/wqueue"
 	"github.com/neverprepared/phantom-skills/internal/config"
 	pkmcp "github.com/neverprepared/phantom-skills/internal/mcp"
+	"github.com/neverprepared/phantom-skills/internal/syncer"
 	"github.com/neverprepared/phantom-skills/internal/version"
 )
 
@@ -68,11 +69,14 @@ func runMCP() error {
 	// Background drainer flushes queued writes as the daemon becomes reachable.
 	go client.NewDrainer(q, c, conn, 30*time.Second, logger).Run(ctx)
 
+	sy := syncer.New(c, agent.SkillsDir, agent.StateDir(), logger)
+
 	srv := server.NewMCPServer("phantom-skills", version.Version, server.WithToolCapabilities(false))
 	pkmcp.NewServer(pkmcp.ServerDeps{
 		Client: c,
 		Queue:  q,
 		Conn:   conn,
+		Syncer: sy,
 		Agent:  *agent,
 	}).Register(srv)
 
