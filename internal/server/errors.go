@@ -8,14 +8,14 @@ import (
 // Error envelope codes used across the API. STRING constants (not int enums)
 // because operators and clients pattern-match on them in logs and code.
 const (
-	ErrCodeInvalidToken   = "INVALID_TOKEN"
-	ErrCodeScopeNotFound  = "SCOPE_NOT_FOUND"
-	ErrCodeNotFound       = "NOT_FOUND"
-	ErrCodeBadRequest     = "BAD_REQUEST"
-	ErrCodeConflict       = "CONFLICT"
+	ErrCodeInvalidToken    = "INVALID_TOKEN"
+	ErrCodeScopeNotFound   = "SCOPE_NOT_FOUND"
+	ErrCodeNotFound        = "NOT_FOUND"
+	ErrCodeBadRequest      = "BAD_REQUEST"
+	ErrCodeConflict        = "CONFLICT"
 	ErrCodePayloadTooLarge = "PAYLOAD_TOO_LARGE"
-	ErrCodeStorageBackend = "STORAGE_BACKEND_ERROR"
-	ErrCodeInternal       = "INTERNAL_ERROR"
+	ErrCodeStorageBackend  = "STORAGE_BACKEND_ERROR"
+	ErrCodeInternal        = "INTERNAL_ERROR"
 )
 
 // ErrorEnvelope is the on-the-wire shape every error response uses.
