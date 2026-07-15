@@ -36,6 +36,15 @@ func mockBrainbox(t *testing.T) (*httptest.Server, *[]map[string]any) {
 	mux.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": true})
 	})
+	mux.HandleFunc("/api/ratchet", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		creates = append(creates, body)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true, "job_id": "job-1", "task_id": "task-1", "repo_url": body["repo_url"],
+		})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, &creates
@@ -88,6 +97,38 @@ func TestRunWorkerRequiresTask(t *testing.T) {
 	c := New(srv.URL, "")
 	if _, err := c.RunWorker(context.Background(), WorkerSpec{Name: "x"}); err == nil {
 		t.Fatal("expected error for empty task")
+	}
+}
+
+func TestRatchetSendsRepoURLAndTask(t *testing.T) {
+	srv, creates := mockBrainbox(t)
+	c := New(srv.URL, "")
+	res, err := c.Ratchet(context.Background(), RatchetSpec{
+		RepoURL: "git@github.com:neverprepared/phantom-skills-registry",
+		Task:    "improve git-worktree-flow; open a PR",
+		Branch:  "skill/improve-git-worktree-flow",
+		Profile: "personal",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success || res.TaskID != "task-1" {
+		t.Fatalf("unexpected ratchet result: %+v", res)
+	}
+	got := (*creates)[len(*creates)-1]
+	if got["repo_url"] == "" || got["task"] == "" {
+		t.Fatalf("ratchet must send repo_url + task: %v", got)
+	}
+	if got["branch"] != "skill/improve-git-worktree-flow" || got["workspace_profile"] != "personal" {
+		t.Fatalf("ratchet optional fields wrong: %v", got)
+	}
+}
+
+func TestRatchetRequiresRepoAndTask(t *testing.T) {
+	srv, _ := mockBrainbox(t)
+	c := New(srv.URL, "")
+	if _, err := c.Ratchet(context.Background(), RatchetSpec{Task: "x"}); err == nil {
+		t.Fatal("expected error without repo_url")
 	}
 }
 

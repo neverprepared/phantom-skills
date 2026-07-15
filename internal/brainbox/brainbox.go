@@ -121,9 +121,72 @@ func (c *Client) Delete(ctx context.Context, session string) error {
 	return c.do(ctx, http.MethodPost, "/api/delete", map[string]any{"name": session}, nil)
 }
 
-// WorkerSpec launches a transient `worker` agent with a self-contained task.
-// The task text must tell the agent everything — which repo to clone, what to
-// change, and to open a PR — because the API carries no repo object.
+// RatchetSpec fires a single autonomous `worker` via POST /api/ratchet. The
+// worker clones RepoURL, implements Task, opens a PR, watches CI to green, then
+// stops with the PR open (merging is out of scope — the PR is the gate). This
+// is the intended path for the phantom-skills improvement loop.
+type RatchetSpec struct {
+	RepoURL string
+	Task    string
+	Branch  string // optional PR branch hint
+	Profile string
+	Backend string // default docker
+}
+
+// RatchetResult is the POST /api/ratchet response.
+type RatchetResult struct {
+	Success bool   `json:"success"`
+	JobID   string `json:"job_id"`
+	TaskID  string `json:"task_id"`
+	RepoURL string `json:"repo_url"`
+}
+
+// Ratchet fires a ratchet worker. The task is queued (PENDING) and dispatched
+// to a container within seconds; poll TaskStatus(result.TaskID) for progress
+// and the assigned session name.
+//
+// NOTE: requires brainbox with the /api/ratchet endpoint (commit #253). Until
+// that's deployed, use RunWorker as the fallback.
+func (c *Client) Ratchet(ctx context.Context, s RatchetSpec) (*RatchetResult, error) {
+	if strings.TrimSpace(s.RepoURL) == "" || strings.TrimSpace(s.Task) == "" {
+		return nil, fmt.Errorf("brainbox: Ratchet requires RepoURL and Task")
+	}
+	backend := s.Backend
+	if backend == "" {
+		backend = "docker"
+	}
+	body := map[string]any{
+		"repo_url": s.RepoURL,
+		"task":     s.Task,
+		"backend":  backend,
+	}
+	if s.Branch != "" {
+		body["branch"] = s.Branch
+	}
+	if s.Profile != "" {
+		body["workspace_profile"] = s.Profile
+	}
+	var out RatchetResult
+	if err := c.do(ctx, http.MethodPost, "/api/ratchet", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// TaskStatus polls a hub task (GET /api/hub/tasks/{id}) for status + the
+// assigned session name. Used to follow a ratchet after Ratchet() returns.
+func (c *Client) TaskStatus(ctx context.Context, taskID string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, "/api/hub/tasks/"+taskID, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// WorkerSpec launches a transient `worker` agent with a self-contained task via
+// POST /api/create. This is the FALLBACK path for brainbox deployments without
+// /api/ratchet — the task text must tell the agent everything (clone, change,
+// open PR) since /api/create carries no repo context.
 type WorkerSpec struct {
 	Name    string
 	Task    string
