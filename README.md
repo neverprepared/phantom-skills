@@ -95,3 +95,7 @@ The plumbing layer is complete and tested (daemon, agent MCP, offline queue,
 sync, telemetry, the human-gated proposal loop, and the pipeline seam). The
 LLM-driven intelligence pipeline (watch → detect → author → verify → prune)
 plugs into the seam in a later release.
+
+## Contributing
+
+Emitting or consuming bus events? See [docs/event-bus-conformance.md](docs/event-bus-conformance.md).
