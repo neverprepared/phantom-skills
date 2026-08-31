@@ -46,13 +46,43 @@ func (d *Daemon) runPipelineOnce(ctx context.Context, since time.Time) error {
 	if err != nil {
 		return err
 	}
+	optionB := d.bbox != nil && d.cfg.Registry.RepoURL != ""
 	for _, c := range candidates {
+		if optionB {
+			d.dispatchRatchet(ctx, c)
+			continue
+		}
+		// Legacy path: author/verify → pending proposal (human gate in Postgres).
 		if err := d.proposeCandidate(ctx, c); err != nil {
 			d.Logger.Warn("phantom-skills: propose candidate failed",
 				slog.String("skill", c.SkillName), slog.String("err", err.Error()))
 		}
 	}
 	return nil
+}
+
+// dispatchRatchet fires an auto-fire ratchet for a candidate under each
+// configured scope (single-scope default for now), logging the outcome and
+// recording fired ratchets to phantom-brain.
+func (d *Daemon) dispatchRatchet(ctx context.Context, c Candidate) {
+	for _, b := range d.registry.Scopes() {
+		res, err := d.autoFireRatchet(ctx, b.Key.Profile, c)
+		switch {
+		case err != nil:
+			d.Logger.Warn("phantom-skills: auto-fire failed",
+				slog.String("skill", c.SkillName), slog.String("err", err.Error()))
+		case res.Fired:
+			d.Logger.Info("phantom-skills: ratchet fired",
+				slog.String("skill", c.SkillName), slog.String("kind", c.Kind), slog.String("task", res.TaskID))
+			if d.brain != nil {
+				d.brain.RecordDecision(ctx, "fired", c.Kind, c.SkillName, "pipeline")
+			}
+		default:
+			d.Logger.Debug("phantom-skills: ratchet skipped",
+				slog.String("skill", c.SkillName), slog.String("reason", res.Reason))
+		}
+		break // single-scope default; M10 fans out per scope
+	}
 }
 
 // proposeCandidate authors + verifies a create candidate (if an Author/Verifier
